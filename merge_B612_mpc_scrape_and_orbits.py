@@ -16,8 +16,8 @@ def retrieve_files():
 
     urls={
         "mpcorb_extended.json.gz": "https://minorplanetcenter.net/Extended_Files/mpcorb_extended.json.gz",
-        "rubin.sqlite.gz":"https://storage.googleapis.com/asteroid-institute-public/production/rubin/mpc/obs_sbn/sqlite/rubin.sqlite.gz"
-        "cometels.json.gz": "https://www.minorplanetcenter.net/Extended_Files/cometels.json.gz",
+        "rubin.sqlite.gz":"https://storage.googleapis.com/asteroid-institute-public/production/rubin/mpc/obs_sbn/sqlite/rubin.sqlite.gz",
+        "cometels.json.gz": "https://www.minorplanetcenter.net/Extended_Files/cometels.json.gz"
     }
     
     reg ={}
@@ -75,7 +75,8 @@ def main():
     
     # download the files from MPC and B612 Foundation
     
-    fnames= retrieve_files()
+    #fnames= retrieve_files()
+    fnames=['/Users/mschwamb/Library/Caches/rubin/mpcorb_extended.json', '/Users/mschwamb/Library/Caches/rubin/rubin.sqlite', '/Users/mschwamb/Library/Caches/rubin/cometels.json']
     
     print(fnames)
     
@@ -93,7 +94,14 @@ def main():
     conn = sqlite3.connect(fnames[1])  
     cursor = conn.cursor()
     
+       
+    # remove things that are in the ITF ( Isolated Tracklet File) because 
+    # we don't what object these observations belong to
     
+    print("removing ITF observations")
+    cmd="delete from obs_sbn where status='I'"
+    cursor.execute(cmd)
+    conn.commit()
     
     # some entries within the obs_sbn do not have a provid but do have a permid.
     # take the permid and grab the provid from the MPC file
@@ -126,14 +134,6 @@ def main():
                     conn.commit()
                     counter=0
                     
-    conn.commit()
-    
-    # remove things that are in the ITF ( Isolated Tracklet File) because 
-    # we don't what object these observations belong to
-    
-    print("removing ITF observations")
-    cmd="delete from obs_sbn where status='I'"
-    cursor.execute(cmd)
     conn.commit()
         
     
@@ -249,7 +249,10 @@ def main():
             cmd = "insert into mpc_orbits(fullDesignation, mpcH, a, q, e, incl, node, peri, t_p, epoch, nopp, tisserand_J)" +" values('"+data[i]['Principal_desig']+"',"+str(data[i]['H'])+","+str(data[i]['a'])+","+str(data[i]['Perihelion_dist'])+","+str(data[i]['e'])+","+str(data[i]['i'])+","+str(data[i]['Node'])+","+str(data[i]['Peri'])+","+str(data[i]['Tp'])+","+str(data[i]['Epoch'])+","+str(data[i]['Num_opps'])+","+str(tisserand_J[i])+")"
             #print(cmd)
             cursor.execute(cmd)
-            #conn.commit()
+
+            if (data[i]['a'] =='' or np.isnan(data[i]['a'])):
+                print('no a')
+    
 
         counter=counter+1
         
@@ -258,11 +261,55 @@ def main():
             counter=0
             
 
-    
     conn.commit()
+    
+        
     
     del data 
     
+    
+    
+    # there are a few comets that have been observed. Currently they are not in the MPCORB.dat
+    
+    cmd="select distinct permid from obs_sbn where provid is NULL"
+    comets=pd.read_sql_query(cmd, conn)
+    cometids = comets.to_numpy() 
+    cometids=np.concatenate(cometids)
+    
+    file = open(fnames[2], 'r')
+    data = json.load(file)
+    
+    counter =0 
+    if(len(cometids) > 0):
+        
+        for cometname in cometids: 
+            print(cometname, cometname[-1], cometname[0:-1])
+            if (cometname[-1] in  ['C', 'P']):
+                comet_number = cometname[0:-1]
+                print(comet_number)
+                
+                cmd=f'update obs_sbn set provid="{cometname}" where permid="{cometname}"'   
+                conn.execute(cmd) 
+                
+                counter=counter+1
+                
+                if (counter >=50):
+                    conn.commit()
+                    counter=0
+                    
+    conn.commit()
+    
+        
+    for i in np.arange(len(data)):
+        if "Comet_num" in data[i].keys() and "Orbit_type" in data[i].keys():
+            c=f"{data[i]['Comet_num']}{data[i]['Orbit_type']}"
+            print(c)
+            stop
+        
+    
+    del data 
+    
+       
     # There is no mjd in the mpc database just a date string. Let's add in mjd
     # Also early LSST fitlers didn't have the l in front of the filter (band) name
     
@@ -295,12 +342,12 @@ def main():
         if (counter >=50000):
             conn.commit()
             counter=0
-            
-
-    
+        
     
     
     conn.commit()
+    
+    
     conn.close()
     
     file.close()
