@@ -75,8 +75,10 @@ def main():
     
     # download the files from MPC and B612 Foundation
     
-    #fnames= retrieve_files()
-    fnames=['/Users/mschwamb/Library/Caches/rubin/mpcorb_extended.json', '/Users/mschwamb/Library/Caches/rubin/rubin.sqlite', '/Users/mschwamb/Library/Caches/rubin/cometels.json']
+    fnames= retrieve_files()
+    
+    # For debugging and development
+    #fnames=['/Users/mschwamb/Library/Caches/rubin/mpcorb_extended.json', '/Users/mschwamb/Library/Caches/rubin/rubin.sqlite', '/Users/mschwamb/Library/Caches/rubin/cometels.json']
     
     print(fnames)
     
@@ -271,43 +273,84 @@ def main():
     
     # there are a few comets that have been observed. Currently they are not in the MPCORB.dat
     
-    cmd="select distinct permid from obs_sbn where provid is NULL"
+    # need to update their provids first 
+    
+    cmd="select distinct permid from obs_sbn where provid is NULL and permid is NOT NULL"
     comets=pd.read_sql_query(cmd, conn)
     cometids = comets.to_numpy() 
-    cometids=np.concatenate(cometids)
-    
-    file = open(fnames[2], 'r')
-    data = json.load(file)
+
     
     counter =0 
-    if(len(cometids) > 0):
-        
+    if(len(cometids) > 0): 
+        cometids=np.concatenate(cometids)        
         for cometname in cometids: 
             print(cometname, cometname[-1], cometname[0:-1])
-            if (cometname[-1] in  ['C', 'P']):
-                comet_number = cometname[0:-1]
-                print(comet_number)
-                
+            if (cometname[-1] in  ['C', 'P']):        
                 cmd=f'update obs_sbn set provid="{cometname}" where permid="{cometname}"'   
                 conn.execute(cmd) 
                 
                 counter=counter+1
                 
-                if (counter >=50):
+                if (counter >=5000):
                     conn.commit()
                     counter=0
                     
-    conn.commit()
+        conn.commit()
     
-        
-    for i in np.arange(len(data)):
-        if "Comet_num" in data[i].keys() and "Orbit_type" in data[i].keys():
-            c=f"{data[i]['Comet_num']}{data[i]['Orbit_type']}"
-            print(c)
-            stop
-        
     
-    del data 
+        counter=0
+        
+        # open comets file if there are comets in the observations database
+            
+        file = open(fnames[2], 'r')
+        data = json.load(file)
+    
+        for i in np.arange(len(data)):
+            if "Comet_num" in data[i].keys() and "Orbit_type" in data[i].keys():
+                c=f"{data[i]['Comet_num']}{data[i]['Orbit_type']}"
+                w= c== cometids
+                if (len(cometids[w]) > 0):
+                    print(c) 
+                    print(f'{data[i]['H']}, {data[i]['Perihelion_dist']}, {data[i]['e']}, {data[i]['i']}, {data[i]['Node']}')
+               
+                    epoch =  Time({'year': int(data[i]['Epoch_year']), 'month': int(data[i]['Epoch_month']), 'day': int(data[i]['Epoch_day']),'hour': 0, 'minute': 0, 'second': 0}, scale='tt') 
+                    epoch= epoch.mjd
+                    
+                    # time of perihelion is given with decimal days
+                    
+                    hours=float(data[i]['Day_of_perihelion']) - np.floor(data[i]['Day_of_perihelion'])
+                    hours=hours*24
+                    minutes= (hours-np.floor(hours))*60
+                    seconds=int((minutes-np.floor(minutes))*60)
+                    hours=int(hours)
+                    minutes=int(minutes)
+        
+                    
+                    tp= Time({'year': int(data[i]['Year_of_perihelion']), 'month': int(data[i]['Month_of_perihelion']), 'day': int(data[i]['Day_of_perihelion']),'hour': hours, 'minute': minutes, 'second': seconds}, scale='tt') 
+                    tp= tp.mjd
+                    
+                    print(epoch, tp)
+                    if (data[i]['e']>=1): 
+                        cmd = "insert into mpc_orbits(fullDesignation, mpcH, q, e, incl, node, peri, t_p, epoch)" +" values('"+c+"',"+str(data[i]['H'])+","+str(data[i]['Perihelion_dist'])+","+str(data[i]['e'])+","+str(data[i]['i'])+","+str(data[i]['Node'])+","+str(data[i]['Peri'])+","+str(tp)+","+str(epoch)+")"
+                    else:
+                        a=data[i]['Perihelion_dist']/(1-data[i]['e'])
+                        data[i]['a']=a
+                        tisserand_J = tisserand(a_J, [data[i]])
+                        cmd = "insert into mpc_orbits(fullDesignation, mpcH, a, q, e, incl, node, peri, t_p, epoch, tisserand_J)" +" values('"+c+"',"+str(data[i]['H'])+","+str(a)+","+str(data[i]['Perihelion_dist'])+","+str(data[i]['e'])+","+str(data[i]['i'])+","+str(data[i]['Node'])+","+str(data[i]['Peri'])+","+str(tp)+","+str(epoch)+","+str(tisserand_J[0])+")"
+
+                    print(cmd)
+                    
+                    cursor.execute(cmd)
+                    
+                    counter=counter+1
+                
+                    if (counter >=50000):
+                        conn.commit() 
+                        counter=0
+                            
+    
+    
+        del data 
     
        
     # There is no mjd in the mpc database just a date string. Let's add in mjd
